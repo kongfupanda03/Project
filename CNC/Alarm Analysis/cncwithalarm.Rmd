@@ -1,0 +1,172 @@
+---
+title: "cncwithalarm from Apr 18th to Apr 29th"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#import data
+```{r include=FALSE}
+#Sys.setlocale('LC_CTYPE', locale = "English_United States.1252") 
+library(tidyverse)
+library(plotly)
+library(readxl)
+cncwithalarm<- read_excel('cncdatawithalarm.xlsx')
+```
+
+#format data
+```{r}
+col_factor<-c('dSn','Status','Category','CurrenttoolNo','AMsgContent','AMsgNo')
+cncwithalarm[,col_factor]<-lapply(cncwithalarm[,col_factor], as.factor)
+```
+#order by timestamp
+```{r}
+cncwithalarm<-cncwithalarm[order(cncwithalarm$EventTime),]
+```
+
+
+#data summary
+#msgno = 32; msg content=71
+#abnormality found on data:
+#1. eg: T04 Dao Jun Yi Chang ->Toolno = 4&5; same issue with other Dao Jun Yi chang
+#2. 1 msgno ->multiple msg content eg: EX1003 ->急停，急停q
+#3. 71 out of 33294 obs status ==1
+###Data cleaning
+
+```{r}
+cncwithalarm<-cncwithalarm[-4]
+cont<-unique(cncwithalarm$AMsgContent) 
+No<-unique(cncwithalarm$AMsgNo)
+cncwithalarm$AMsgContent<-str_trim(cncwithalarm$AMsgContent)
+```
+#To explore msgno and msg content
+
+```{r}
+msg<-select(cncwithalarm,AMsgContent,AMsgNo)%>%group_by(AMsgNo,AMsgContent)%>%mutate(count=n())
+msg1u<-unique(msg)
+msg1u<-msg1u[order(msg1u$AMsgNo),]
+write_excel_csv(msg1u,'AlarmMsgTable.csv')
+```
+
+#To clean wierd characters in alarm content
+#MC3001 ->multiple alarm types
+#EX1003	急停,急停q
+#EX1012	处在换刀区域内,处在换刀区域内 <
+
+
+```{r}
+cncwithalarm$AMsgContent_cleaned<-NA
+matchtable<-read_excel('alarmno_content_matchtable.xlsx')
+#To clean unique pair
+alarmNo<-matchtable$AMsgNo
+
+for (i in alarmNo){
+  cncwithalarm$AMsgContent_cleaned[cncwithalarm$AMsgNo ==i]<-matchtable$AMsgContent[matchtable$AMsgNo==i]
+}
+
+#to clean dao ju yi chang series
+DJYC_idx<-str_which(cncwithalarm$AMsgContent,'DAO JU YI CHANG')
+DJYC_replacement<-str_replace_all(cncwithalarm$AMsgContent,'DAO JU YI CHANG','刀具异常')
+cncwithalarm$AMsgContent_cleaned[DJYC_idx]<-DJYC_replacement[DJYC_idx]
+
+#test<-cncwithalarm[cncwithalarm$AMsgNo=='OT500',]
+```
+
+#clean 1- multi alarm pair
+#MC3001,MC3050,OT500, SV476,SV494
+
+```{r}
+#easy ones, no need translation
+multi_easy<-c('OT500','SV476','SV494')
+for (i in multi_easy){
+  cncwithalarm$AMsgContent_cleaned[cncwithalarm$AMsgNo==i]<-cncwithalarm$AMsgContent[cncwithalarm$AMsgNo==i]
+}
+
+
+#translate and then do the multi matching
+#MC3001
+#huan-cuo-dao(半径检测）
+MC3001_hcd<-str_which(cncwithalarm$AMsgContent,'huan  cuo  dao')
+hcd_replacement<-str_replace_all(cncwithalarm$AMsgContent,'huan  cuo  dao','换错刀')
+cncwithalarm$AMsgContent_cleaned[MC3001_hcd]<-hcd_replacement[MC3001_hcd]
+#dao-duan（刀长保护）				
+MC3001_dd<-str_which(cncwithalarm$AMsgContent,'dao duan')
+dd_replacement<-str_replace_all(cncwithalarm$AMsgContent,'dao duan','刀长保护')
+cncwithalarm$AMsgContent_cleaned[MC3001_dd]<-dd_replacement[MC3001_dd]
+
+#Lou jia gong (漏加工）				
+MC3001_ljg<-str_which(cncwithalarm$AMsgContent,'-LOU-JIA-GONG|LOUJIAGONG')
+ljg_replacement<-str_replace_all(cncwithalarm$AMsgContent,'-LOU-JIA-GONG|LOUJIAGONG','漏加工')
+cncwithalarm$AMsgContent_cleaned[MC3001_ljg]<-ljg_replacement[MC3001_ljg]
+#T21-Mo-sun-huan（T21 刀具磨损）				
+MC3001_msh<-str_which(cncwithalarm$AMsgContent,'-Mo-sun-huan')
+msh_replacement<-str_replace_all(cncwithalarm$AMsgContent,'-Mo-sun-huan','刀具磨损')
+cncwithalarm$AMsgContent_cleaned[MC3001_msh]<-msh_replacement[MC3001_msh]
+
+#na<-subset(cncwithalarm,is.na(cncwithalarm$AMsgContent_cleaned))
+###MC3050		A-G54 X chao cha(坐标保护）				
+MC3050<-str_which(cncwithalarm$AMsgContent,'CHAO CHA')
+MC3050_replacement<-str_replace_all(cncwithalarm$AMsgContent,'CHAO CHA','超差')
+cncwithalarm$AMsgContent_cleaned[MC3050]<-MC3050_replacement[MC3050]
+				
+##change to correct data type
+cncwithalarm$AMsgContent_cleaned<-as.factor(cncwithalarm$AMsgContent_cleaned)
+
+```
+#for Currenttoolno == 0
+```{r}
+cncwithalarm<-cncwithalarm[cncwithalarm$CurrenttoolNo!=0,]
+
+```
+
+
+
+##1. plot the alarm distribution
+```{r}
+p1 <-ggplot(cncwithalarm,aes(x=fct_infreq(AMsgContent_cleaned)))+geom_bar()+theme(axis.text.x = element_text(size=5,angle = 90,colour = "red"))
+ ggplotly(p1)
+```
+#1.1 Top 10 alarm pareto
+```{r}
+top_10<-cncwithalarm%>%group_by(AMsgContent_cleaned)%>%summarise(count=n())%>%arrange(desc(count))%>%top_n(10)
+
+P1_1 <-cncwithalarm%>%filter(cncwithalarm$AMsgContent_cleaned %in% top_10$AMsgContent_cleaned)%>% ggplot(aes(x=fct_infreq(AMsgContent_cleaned)))+geom_bar()+theme(axis.text.x = element_text(size=8,angle = 90,colour = "red"))
+ggplotly(P1_1)
+```
+
+
+
+#2. plot alarm vs currenttoolNo
+#2.1 AmsgNo Vs CurrenttoolNo
+```{r}
+p2_1<-group_by(cncwithalarm,CurrenttoolNo,AMsgNo)%>%ggplot(aes(x=CurrenttoolNo, fill=AMsgNo))+geom_bar()+labs(x='Current tool no',y='alarm count', title='alarm distributio vs cutter no')
+ggplotly(p2_1)
+```
+```{r}
+df1<-group_by(cncwithalarm,CurrenttoolNo,AMsgNo)%>%
+  summarise(count=n())%>%mutate(percentage=count/sum(count))
+
+p2_2<-ggplot(df1,aes(x=CurrenttoolNo,y=count, fill=AMsgNo,order=percentage))+geom_bar(stat = 'identity')+geom_text(aes(label=round(percentage,2)),size=2)+labs(x='Current tool no',y='alarm count', title='alarm distributio vs cutter no')
+
+ggplotly(p2_2)
+```
+
+#2.2 AmsgContent Vs CurrenttoolNo
+```{r}
+p2_3<-group_by(cncwithalarm,CurrenttoolNo,AMsgContent_cleaned)%>%ggplot(aes(x=CurrenttoolNo, fill=AMsgContent_cleaned))+geom_bar()+labs(x='Current tool no',y='alarm count', title='alarm distributio vs cutter no')
+ggplotly(p2_3)
+```
+```{r}
+df2<-group_by(cncwithalarm,CurrenttoolNo,AMsgContent_cleaned)%>%
+  summarise(count=n())%>%mutate(percentage=count/sum(count))
+p2_4<-
+  ggplot(df2,aes(x=CurrenttoolNo,y=count, fill=AMsgContent_cleaned))+
+  geom_bar(stat = 'identity')+
+  #geom_text(aes(label=round(percentage,2)),vjust = 0, nudge_y = 15,size = 2,check_overlap = TRUE)+
+  labs(x='Current tool No',y='Alarm Count', title='Alarm Distributio vs Cutter No')
+
+ggplotly(p2_4)
+```
+

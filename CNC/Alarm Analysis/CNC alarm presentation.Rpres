@@ -1,0 +1,293 @@
+CNC alarm presentation
+========================================================
+author: Xiong Yuyu
+date: May 29th
+autosize: true
+
+Alarm Analysis
+========================================================
+
+
+
+- Alarm Distribution
+- The Top Concern
+- Opportunities to fix it
+
+Alarm Distribution
+========================================================
+
+```{r include=FALSE}
+#import data
+library(tidyverse)
+library(plotly)
+library(readxl)
+cncwithalarm<- read_excel('cnc alarm data.xlsx')
+col_factor<-c('dSn','Status','Category','CurrenttoolNo','AMsgContent','AMsgNo')
+cncwithalarm[,col_factor]<-lapply(cncwithalarm[,col_factor], as.factor)
+cncwithalarm<-cncwithalarm[cncwithalarm$CurrenttoolNo!=0,]
+cncwithalarm<-cncwithalarm[order(cncwithalarm$EventTime),]
+cncwithalarm$AMsgContent<-str_replace_all(cncwithalarm$AMsgContent,"\\?|<","" )
+#cncwithalarm$AMsgContent[cncwithalarm$AMsgNo=='EX1003']<-enc2utf8("急停")
+#cncwithalarm$AMsgContent[cncwithalarm$AMsgNo=='EX1084']<-enc2utf8("继电器异常(KA15 DCS)") 
+cncwithalarm$AMsgContent<-str_trim(cncwithalarm$AMsgContent, side='both')
+#verify
+unique(cncwithalarm$AMsgContent)
+msg<-select(cncwithalarm,AMsgContent,AMsgNo)%>%group_by(AMsgNo,AMsgContent)%>%mutate(count=n())
+msg1u<-unique(msg)
+msg1u<-msg1u[order(msg1u$AMsgNo),]
+#write_excel_csv(msg1u,'AlarmMsgTable.csv')
+
+
+```
+
+```{r echo=FALSE, fig.width=50, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+p1<-ggplot(cncwithalarm,aes(x=fct_infreq(AMsgContent)))+
+  geom_bar()+
+  geom_text(aes(label=..count..),stat="count",size=1.8,colour='red')+
+  theme(axis.text.x = element_text(size=5,angle = 90,colour ="red"))+
+  labs(title='Alarm Distribution',subtitle='for data from 4/18 to 5/29',x='Alarm Content',y='Alarm Count')
+p2<-ggplotly(p1)
+htmlwidgets::saveWidget(as_widget(p2), file = "alarm.html")
+```
+<iframe src="alarm.html" style="position:absolute;height:100%;width:100%"></iframe>
+
+Alarm Top 10 Pareto
+========================================================
+```{r include=FALSE}
+top_10<-cncwithalarm%>%group_by(AMsgContent)%>%summarise(count=n())%>%arrange(desc(count))%>%top_n(10)
+
+p1_top10 <-cncwithalarm%>%
+  filter(cncwithalarm$AMsgContent%in% top_10$AMsgContent)%>%
+  ggplot(aes(x=fct_infreq(AMsgContent)))+
+  geom_bar()+
+  geom_text(aes(label=..count..),stat="count",size=3,colour='red')+
+  theme(axis.text.x = element_text(size=8,angle = 90,colour = "red"))+
+  labs(title='Top 10 Alarm Pareto',subtitle='for data from 4/18 to 5/29',x='Alarm Content',y='Alarm Count')
+p_top10<-ggplotly(p1_top10)
+htmlwidgets::saveWidget(as_widget(p_top10), file = "top10.html")
+
+
+```
+<iframe src="top10.html" style="position:absolute;height:100%;width:100%"></iframe>
+
+Alarm Distribution across cutters
+========================================================
+
+```{r include=FALSE}
+p3_3<-group_by(cncwithalarm,CurrenttoolNo,AMsgContent)%>%
+  summarise(count=n())%>%mutate(percentage=count/sum(count))%>%
+  ggplot(aes(x=CurrenttoolNo,y=count, fill=AMsgContent))+
+  geom_bar(stat = 'identity')+
+  #geom_text(aes(label=round(percentage,2)),size=3,colour='red',position=position_stack())+
+  labs(x='Current Tool Number',y='Alarm Count', title='Alarm Distributio VS Cutter No.')
+
+p3<-ggplotly(p3_3)
+htmlwidgets::saveWidget(as_widget(p3), file = "alarmvscutter.html")
+```
+<iframe src="alarmvscutter.html" style="position:absolute;height:100%;width:100%"></iframe>
+
+Alarm Distribution aross Cutters on DSN-892777344
+========================================================
+```{r include=FALSE}
+DSN<- unique(cncwithalarm$dSn)
+p3_3_1<-subset(cncwithalarm, dSn==DSN[1])%>%
+  group_by(CurrenttoolNo,AMsgContent)%>%
+  summarise(count=n())%>%mutate(percentage=count/sum(count))%>%
+  ggplot(aes(x=CurrenttoolNo,y=count, fill=AMsgContent))+
+  geom_bar(stat = 'identity')+
+  #geom_text(aes(label=round(percentage,2)),size=3,colour='red',position=position_stack())+
+  labs(x='Current Tool Number',y='Alarm Count', title=paste('Alarm Distribution on ',as.character(DSN[1])))
+plotly_1<-ggplotly(p3_3_1)
+htmlwidgets::saveWidget(as_widget(plotly_1), file = "892777344.html")
+```
+<iframe src="892777344.html" style="position:absolute;height:100%;width:100%"></iframe>
+
+Alarm Distribution aross Cutters on DSN-892445657
+========================================================
+```{r include=FALSE}
+p3_3_2<-subset(cncwithalarm, dSn==DSN[2])%>%
+  group_by(CurrenttoolNo,AMsgContent)%>%
+  summarise(count=n())%>%mutate(percentage=count/sum(count))%>%
+  ggplot(aes(x=CurrenttoolNo,y=count, fill=AMsgContent))+
+  geom_bar(stat = 'identity')+
+ # geom_text(aes(label=round(percentage,2)),size=3,colour='red',position=position_stack())+
+  labs(x='Current Tool Number',y='Alarm Count', title=paste('Alarm Distribution on ',as.character(DSN[2])))
+plotly_2<-ggplotly(p3_3_2)
+htmlwidgets::saveWidget(as_widget(plotly_2), file = "892445657.html")
+```
+<iframe src="892445657.html" style="position:absolute;height:100%;width:100%"></iframe>
+
+
+Alarm Distribution aross Cutters on DSN-892436785
+========================================================
+```{r include=FALSE}
+p3_3_3<-subset(cncwithalarm, dSn==DSN[3])%>%
+  group_by(CurrenttoolNo,AMsgContent)%>%
+  summarise(count=n())%>%mutate(percentage=count/sum(count))%>%
+  ggplot(aes(x=CurrenttoolNo,y=count, fill=AMsgContent))+
+  geom_bar(stat = 'identity')+
+ # geom_text(aes(label=round(percentage,2)),size=3,colour='red',position=position_stack())+
+  labs(x='Current Tool Number',y='Alarm Count', title=paste('Alarm Distribution on ',as.character(DSN[3])))
+plotly_3<-ggplotly(p3_3_3)
+htmlwidgets::saveWidget(as_widget(plotly_3), file = "892436785.html")
+```
+<iframe src="892436785.html" style="position:absolute;height:100%;width:100%"></iframe>
+
+Alarm Distribution aross Cutters on DSN-892324723
+========================================================
+```{r include=FALSE}
+p3_3_4<-subset(cncwithalarm, dSn==DSN[4])%>%
+  group_by(CurrenttoolNo,AMsgContent)%>%
+  summarise(count=n())%>%mutate(percentage=count/sum(count))%>%
+  ggplot(aes(x=CurrenttoolNo,y=count, fill=AMsgContent))+
+  geom_bar(stat = 'identity')+
+ # geom_text(aes(label=round(percentage,2)),size=3,colour='red',position=position_stack())+
+  labs(x='Current Tool Number',y='Alarm Count', title=paste('Alarm Distribution on ',as.character(DSN[4])))
+plotly_4<-ggplotly(p3_3_4)
+htmlwidgets::saveWidget(as_widget(plotly_4), file = "892324723.html")
+```
+<iframe src="892324723.html" style="position:absolute;height:100%;width:100%"></iframe>
+
+
+Alarm Distribution aross Cutters on DSN-892667233
+========================================================
+```{r include=FALSE}
+
+p3_3_5<-subset(cncwithalarm, dSn==DSN[5])%>%
+  group_by(CurrenttoolNo,AMsgContent)%>%
+  summarise(count=n())%>%mutate(percentage=count/sum(count))%>%
+  ggplot(aes(x=CurrenttoolNo,y=count, fill=AMsgContent))+
+  geom_bar(stat = 'identity')+
+  #geom_text(aes(label=round(percentage,2)),size=3,colour='red',position=position_stack())+
+  labs(x='Current Tool Number',y='Alarm Count', title=paste('Alarm Distribution on ',as.character(DSN[5])))
+plotly_5<-ggplotly(p3_3_5)
+htmlwidgets::saveWidget(as_widget(plotly_5), file = "892667233.html")
+```
+<iframe src="892667233.html" style="position:absolute;height:100%;width:100%"></iframe>
+
+Alarm Distribution aross Cutters on DSN-892664471
+========================================================
+```{r include=FALSE}
+
+p3_3_6<-subset(cncwithalarm, dSn==DSN[6])%>%
+  group_by(CurrenttoolNo,AMsgContent)%>%
+  summarise(count=n())%>%mutate(percentage=count/sum(count))%>%
+  ggplot(aes(x=CurrenttoolNo,y=count, fill=AMsgContent))+
+  geom_bar(stat = 'identity')+
+  #geom_text(aes(label=round(percentage,2)),size=3,colour='red',position=position_stack())+
+  labs(x='Current Tool Number',y='Alarm Count', title=paste('Alarm Distribution on ',as.character(DSN[6])))
+plotly_6<-ggplotly(p3_3_6)
+htmlwidgets::saveWidget(as_widget(plotly_6), file = "892664471.html")
+```
+<iframe src="892664471.html" style="position:absolute;height:100%;width:100%"></iframe>
+
+Alarm Distribution aross Cutters on DSN-892565267
+========================================================
+```{r include=FALSE}
+
+p3_3_7<-subset(cncwithalarm, dSn==DSN[7])%>%
+  group_by(CurrenttoolNo,AMsgContent)%>%
+  summarise(count=n())%>%mutate(percentage=count/sum(count))%>%
+  ggplot(aes(x=CurrenttoolNo,y=count, fill=AMsgContent))+
+  geom_bar(stat = 'identity')+
+  #geom_text(aes(label=round(percentage,2)),size=3,colour='red',position=position_stack())+
+  labs(x='Current Tool Number',y='Alarm Count', title=paste('Alarm Distribution on ',as.character(DSN[7])))
+plotly_7<-ggplotly(p3_3_7)
+htmlwidgets::saveWidget(as_widget(plotly_7), file = "892565267.html")
+```
+<iframe src="892565267.html" style="position:absolute;height:100%;width:100%"></iframe>
+
+Alarm Distribution aross Cutters on DSN-892556345
+========================================================
+```{r include=FALSE}
+
+p3_3_8<-subset(cncwithalarm, dSn==DSN[8])%>%
+  group_by(CurrenttoolNo,AMsgContent)%>%
+  summarise(count=n())%>%mutate(percentage=count/sum(count))%>%
+  ggplot(aes(x=CurrenttoolNo,y=count, fill=AMsgContent))+
+  geom_bar(stat = 'identity')+
+ # geom_text(aes(label=round(percentage,2)),size=3,colour='red',position=position_stack())+
+  labs(x='Current Tool Number',y='Alarm Count', title=paste('Alarm Distribution on ',as.character(DSN[8])))
+plotly_8<-ggplotly(p3_3_8)
+htmlwidgets::saveWidget(as_widget(plotly_8), file = "892556345.html")
+```
+<iframe src="892556345.html" style="position:absolute;height:100%;width:100%"></iframe>
+
+Alarm Distribution aross Cutters on DSN-892463890
+========================================================
+```{r include=FALSE}
+
+p3_3_9<-subset(cncwithalarm, dSn==DSN[9])%>%
+  group_by(CurrenttoolNo,AMsgContent)%>%
+  summarise(count=n())%>%mutate(percentage=count/sum(count))%>%
+  ggplot(aes(x=CurrenttoolNo,y=count, fill=AMsgContent))+
+  geom_bar(stat = 'identity')+
+  #geom_text(aes(label=round(percentage,2)),size=3,colour='red',position=position_stack())+
+  labs(x='Current Tool Number',y='Alarm Count', title=paste('Alarm Distribution on ',as.character(DSN[9])))
+plotly_9<-ggplotly(p3_3_9)
+htmlwidgets::saveWidget(as_widget(plotly_9), file = "892463890.html")
+```
+<iframe src="892463890.html" style="position:absolute;height:100%;width:100%"></iframe>
+
+Alarm Distribution aross Cutters on DSN-892567658
+========================================================
+```{r include=FALSE}
+
+p3_3_10<-subset(cncwithalarm, dSn==DSN[10])%>%
+  group_by(CurrenttoolNo,AMsgContent)%>%
+  summarise(count=n())%>%mutate(percentage=count/sum(count))%>%
+  ggplot(aes(x=CurrenttoolNo,y=count, fill=AMsgContent))+
+  geom_bar(stat = 'identity')+
+ # geom_text(aes(label=round(percentage,2)),size=3,colour='red',position=position_stack())+
+  labs(x='Current Tool Number',y='Alarm Count', title=paste('Alarm Distribution on ',as.character(DSN[10])))
+plotly_10<-ggplotly(p3_3_10)
+htmlwidgets::saveWidget(as_widget(plotly_10), file = "892567658.html")
+```
+<iframe src="892567658.html" style="position:absolute;height:100%;width:100%"></iframe>
+
+Top 2 Alarm summary for each DSN
+========================================================
+```{r echo=FALSE}
+alarmsum<-select(cncwithalarm,dSn,CurrenttoolNo,AMsgContent)%>%
+  group_by(dSn,CurrenttoolNo,AMsgContent)%>%
+  mutate(count=n())%>%
+  unique(.)%>%
+  group_by(dSn)%>%
+  top_n(n=2,wt=count)%>%
+  arrange(dSn)
+write_excel_csv(alarmsum,'alarmsummary.csv')
+  
+```
+![summary of top 2 alarm](sum1.png)
+***
+![summary of top 2 alarm_2](sum2.png)
+
+What to do with high-frequency alarm?
+========================================================
+right:30%
+Based on analysis, main alarm sources are from cutter 7,19,21.
+To reduce alarms:
+
+From SME view
+- Procure from supplier with best cutter quality
+
+From Data view
+- False alarm? Widen limit?
+- Apply data science to detect correlated parameters affecting cutter performance and optimize them, eg. temperature, load
+
+***
+![question](question.png)
+
+What can we contribute?
+========================================================
+
+On-going Project
+
+- Bonsai Cutter Wear-State Model to optimize CNC parameters
+- Defect auto-detection with image processing
+
+Upcoming Projects
+
+- Predictive maintainence with multi-classification modeling
+- Correlation between machine condition and alarms
