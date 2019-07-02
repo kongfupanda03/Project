@@ -1,5 +1,6 @@
 ---
 title: "human analytics"
+Author: Xiong Yuyu
 output: html_document
 ---
 
@@ -88,7 +89,7 @@ emp_data%>%subset(Status==1)%>%
 
 emp_data%>%subset(Status==1)%>%
   ggplot(aes(x=Tenure))+
-  geom_histogram(fill=I("pink"),col=I("blue"),breaks=seq(0,ceiling(max(emp_data$Tenure))))+
+  geom_histogram(fill=I("pink"),col=I("blue"),breaks=seq(0,ceiling(max(emp_data$Tenure)),by=1))+
   labs(title = "Tenure Distribution")
   
 ```
@@ -102,11 +103,11 @@ emp_data%>%
 
 #Calculate information value
 #< 0.15 Poor
-#Between 0.15 and 0.4 Moderate
+#>0.15 and <0.4 Moderate
 #> 0.4 Strong
 
 ```{r include=FALSE}
-install.packages('Information')
+#install.packages('Information')
 library(Information)
 ```
 ```{r}
@@ -119,20 +120,17 @@ data_final<-emp_data%>%select(feature, Status,-SupervisorID)
 #Model
 1.Split Data
 ```{r include=FALSE}
-install.packages('caret')
+#install.packages('caret')
 library('caret')
 ```
 
 ```{r}
 set.seed(223)
-index_train<-createDataPartition(data_final$Status,p=.5, list = FALSE)
+index_train<-createDataPartition(data_final$Status,p=.8, list = FALSE)
 train_set<-data_final[index_train,]
-rest_set<-data_final[-index_train,]
+test_set<-data_final[-index_train,]
 
-set.seed(233)
-index_test<-createDataPartition(rest_set$Status,p=.5, list = FALSE)
-test_set<-rest_set[index_test,]
-validate_set<-rest_set[-index_test,]
+
 ```
 
 2.Train
@@ -146,4 +144,49 @@ summary(simple)
 multi<-glm(Status~.,family = 'binomial',data=train_set)
 summary(multi)
 ```
+#Final
+```{r}
+final<-glm(Status~Tenure+LaborCategory,family = 'binomial',data=train_set)
+summary(final)
+```
+####Evaluation####
+```{r}
+predict_train<-predict(final,newdata=train_set,type="response")
+hist(predict_train)
+cut_off_50_train<-ifelse(predict_train>0.5,1,0)
+table(cut_off_50_train,train_set$Status)
+confusionMatrix(table(cut_off_50_train,train_set$Status))
+```
+
+```{r}
+hist(train_set$Status)
+```
+
+
+```{r}
+predict_test<-predict(final,newdata=test_set,type="response")
+hist(predict_test)
+```
+
+#Table
+```{r}
+cut_off_50_test<-ifelse(predict_test>0.5,1,0)
+table(cut_off_50_test,test_set$Status)
+confusionMatrix(table(cut_off_50_test,test_set$Status))
+```
+##Accuracy=(2223+118)/(2561)=91.41%
+
+#Predict Active employees
+```{r}
+active_emp<-filter(emp_data,Status==0)
+active_emp['risk']<-predict(final,newdata = active_emp,type="response")
+hist(active_emp$risk)
+```
+```{r}
+active_emp%>%select(EmployeeID,risk)%>%top_n(5,wt=risk)
+```
+
+
+
+
 
