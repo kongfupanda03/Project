@@ -1,0 +1,192 @@
+---
+title: "human analytics"
+Author: Xiong Yuyu
+output: html_document
+---
+
+Dataset
+```{r include=FALSE}
+library(tidyverse)
+library(readxl)
+library(lubridate)
+data<-read_excel('EmployeeDetails_SHSSPL.xlsx')
+```
+
+Extract variables
+```{r}
+emp_data<-data%>%select(EmployeeID,EmploymentStatus,ResignationDate,ResignationReason,Position,SupervisorID,PersonnelAreaText,PersSubAreaText,EntryDate,LaborCategory,Gender,PermState,JobTitle,BirthDate,EducationalEstText)
+```
+
+Format Data
+
+```{r}
+#ID to char
+emp_data[,c("EmployeeID","SupervisorID")]<-lapply(emp_data[,c("EmployeeID","SupervisorID")],as.character)
+
+#Date to date
+emp_data[,c("ResignationDate","EntryDate","BirthDate")]<-lapply(emp_data[,c("ResignationDate","EntryDate","BirthDate")],ymd)
+
+#Factor
+emp_data[,c( "EmploymentStatus","ResignationReason","Position","PersonnelAreaText","PersSubAreaText","LaborCategory","Gender","PermState","JobTitle","EducationalEstText")]<-lapply(emp_data[,c( "EmploymentStatus","ResignationReason","Position","PersonnelAreaText","PersSubAreaText","LaborCategory","Gender","PermState","JobTitle","EducationalEstText")], as.factor)
+```
+
+Understand Data
+
+```{r}
+summary(emp_data)
+
+```
+
+#CLEAN
+
+```{r}
+##
+#unique(emp_data$EducationalEstText)
+emp_data<-emp_data%>%filter(EducationalEstText%in%c('高中','大学 / 大专院校','中专','初中','中技','小学','Program Management Manager','Assistant Production Manager','Operations Configuration Specialist II'))
+
+##filter NA
+emp_data<-emp_data%>%filter_at(vars(Position,PermState,JobTitle,BirthDate),all_vars(!is.na(.)))
+
+```
+
+Feature Engineering
+
+```{r}
+emp_data["Status"]<-ifelse(emp_data$EmploymentStatus=="激活",0,1)
+
+Today<-Sys.Date()
+emp_data["Age"]<-time_length(interval(ymd(emp_data$BirthDate),ymd(Today)),"years")
+
+emp_data["Tenure"]<-ifelse(emp_data$Status==1,time_length(interval(ymd(emp_data$EntryDate),ymd(emp_data$ResignationDate)),"years"),time_length(interval(ymd(emp_data$EntryDate),ymd(Today)),"years"))
+
+emp_data<-emp_data%>% select(-c("EmploymentStatus","ResignationDate","EntryDate","BirthDate","Position","JobTitle"))
+
+```
+
+Exploration
+1.turnover vs LaborCategory
+
+```{r}
+
+emp_data%>%
+  group_by(LaborCategory)%>%
+  summarise(turnover=mean(Status))%>%
+  filter(turnover!=0)%>%
+  ggplot(aes(x=LaborCategory,y=turnover))+geom_col()+geom_text(aes(label=round(turnover,2)))
+emp_data%>%
+  count(LaborCategory)%>%
+  mutate(prop=n/sum(n))
+```
+2. Age and tenure turnover distribution
+#20-35
+
+```{r}
+emp_data%>%subset(Status==1)%>%
+  ggplot(aes(x=Age))+
+  geom_histogram(breaks=seq(10,65,by=5),col="red",aes(fill=..count..))+
+  scale_fill_gradient(low="green",high = "red")+
+  labs(title = "Age Distribution")
+
+emp_data%>%subset(Status==1)%>%
+  ggplot(aes(x=Tenure))+
+  geom_histogram(fill=I("pink"),col=I("blue"),breaks=seq(0,ceiling(max(emp_data$Tenure)),by=1))+
+  labs(title = "Tenure Distribution")
+  
+```
+
+3.EducationalEstText
+```{r}
+emp_data%>%
+  subset(Status==1)%>%
+  ggplot(aes(x=EducationalEstText))+geom_bar()+geom_text(stat = 'count',aes(label=..count..),vjust=-0.5)
+```
+
+#Calculate information value
+#< 0.15 Poor
+#>0.15 and <0.4 Moderate
+#> 0.4 Strong
+
+```{r include=FALSE}
+#install.packages('Information')
+library(Information)
+```
+```{r}
+info<-create_infotables(data=emp_data,y='Status')
+info$Summary
+feature<-subset(info$Summary,info$Summary$IV>0.15)[[1]]
+data_final<-emp_data%>%select(feature, Status,-SupervisorID)
+```
+
+#Model
+1.Split Data
+```{r include=FALSE}
+#install.packages('caret')
+library('caret')
+```
+
+```{r}
+set.seed(223)
+index_train<-createDataPartition(data_final$Status,p=.8, list = FALSE)
+train_set<-data_final[index_train,]
+test_set<-data_final[-index_train,]
+
+
+```
+
+2.Train
+2.1 simple
+```{r}
+simple<-glm(Status~Tenure,family = 'binomial',data=train_set)
+summary(simple)
+```
+2.2 Multi
+```{r}
+multi<-glm(Status~.,family = 'binomial',data=train_set)
+summary(multi)
+```
+#Final
+```{r}
+final<-glm(Status~Tenure+LaborCategory,family = 'binomial',data=train_set)
+summary(final)
+```
+####Evaluation####
+```{r}
+predict_train<-predict(final,newdata=train_set,type="response")
+hist(predict_train)
+cut_off_50_train<-ifelse(predict_train>0.5,1,0)
+table(cut_off_50_train,train_set$Status)
+confusionMatrix(table(cut_off_50_train,train_set$Status))
+```
+
+```{r}
+hist(train_set$Status)
+```
+
+
+```{r}
+predict_test<-predict(final,newdata=test_set,type="response")
+hist(predict_test)
+```
+
+#Table
+```{r}
+cut_off_50_test<-ifelse(predict_test>0.5,1,0)
+table(cut_off_50_test,test_set$Status)
+confusionMatrix(table(cut_off_50_test,test_set$Status))
+```
+##Accuracy=(2223+118)/(2561)=91.41%
+
+#Predict Active employees
+```{r}
+active_emp<-filter(emp_data,Status==0)
+active_emp['risk']<-predict(final,newdata = active_emp,type="response")
+hist(active_emp$risk)
+```
+```{r}
+active_emp%>%select(EmployeeID,risk)%>%top_n(5,wt=risk)
+```
+
+
+
+
+
