@@ -81,17 +81,22 @@ emp_data%>%
 #20-35
 
 ```{r}
-emp_data%>%subset(Status==1)%>%
+emp_data%>%subset(Status==1& LaborCategory=='DL')%>%
   ggplot(aes(x=Age))+
-  geom_histogram(breaks=seq(10,65,by=5),col="red",aes(fill=..count..))+
-  scale_fill_gradient(low="green",high = "red")+
-  labs(title = "Age Distribution")
+  geom_histogram(breaks=seq(10,65,by=5),col="#009E73",aes(fill=..count..))+
+  scale_fill_gradient(low="green",high = "#009E73")+
+  labs(x='Age',y='Resignation Count')+
+  ggtitle("DL Age Distribution")+theme(plot.title = element_text(hjust = 0.5))
 
-emp_data%>%subset(Status==1)%>%
+emp_data$churn<-factor(emp_data$Status,levels = c(0,1), 
+                  labels = c('激活','离职'))
+emp_data%>%subset(LaborCategory=='DL')%>%
   ggplot(aes(x=Tenure))+
-  geom_histogram(fill=I("pink"),col=I("blue"),breaks=seq(0,ceiling(max(emp_data$Tenure)),by=1))+
-  labs(title = "Tenure Distribution")
-  
+  geom_histogram(fill=I("#009E73"),col=I("blue"),breaks=seq(0,ceiling(max(emp_data$Tenure)),by=1))+
+  labs(x='Tenure',y='Count of Employees',title = "Tenure Distribution")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  facet_grid(churn~.)
+    
 ```
 
 3.EducationalEstText
@@ -116,6 +121,12 @@ info$Summary
 feature<-subset(info$Summary,info$Summary$IV>0.15)[[1]]
 data_final<-emp_data%>%select(feature, Status,-SupervisorID)
 ```
+```{r}
+data_final$Status<-as.factor(data_final$Status)
+ggplot(data = data_final,aes(x=Status))+geom_bar()+geom_text(stat = 'count',aes(label=..count..))
+```
+**Only 11.6% are resigned class, data very imbalanced to detect resigned**
+
 
 #Model
 1.Split Data
@@ -129,7 +140,13 @@ set.seed(223)
 index_train<-createDataPartition(data_final$Status,p=.8, list = FALSE)
 train_set<-data_final[index_train,]
 test_set<-data_final[-index_train,]
+down_train<-downSample(x=train_set[,-ncol(train_set)],y=train_set$Status)
 
+```
+
+```{r}
+table(down_train$Class)
+table(test_set$Status)
 
 ```
 
@@ -153,14 +170,13 @@ summary(final)
 ```{r}
 predict_train<-predict(final,newdata=train_set,type="response")
 hist(predict_train)
-cut_off_50_train<-ifelse(predict_train>0.5,1,0)
+cut_off_50_train<-ifelse(predict_train>0.3,1,0)
 table(cut_off_50_train,train_set$Status)
 confusionMatrix(table(cut_off_50_train,train_set$Status))
 ```
-
-```{r}
-hist(train_set$Status)
-```
+#condition positive is status =0; TN rate only 0.57, too low.
+#Adjusted cutline from 0.5 to 0.3,TNR changes to 0.85.
+#Data not balanced, prediction spread not reaching 1
 
 
 ```{r}
@@ -170,11 +186,36 @@ hist(predict_test)
 
 #Table
 ```{r}
-cut_off_50_test<-ifelse(predict_test>0.5,1,0)
+cut_off_50_test<-ifelse(predict_test>0.3,1,0)
 table(cut_off_50_test,test_set$Status)
 confusionMatrix(table(cut_off_50_test,test_set$Status))
 ```
-##Accuracy=(2223+118)/(2561)=91.41%
+##Accuracy=(2144+259)/(2561)=93.87%, a bit overfitting
+
+###Using downsampled train_set
+
+```{r}
+down_all<-glm(Class~Tenure,family='binomial',data=down_train)
+summary(down_all)
+```
+```{r}
+predict_DT<-predict(down_all,down_train, type='response')
+hist(predict_DT)
+cut_off<-ifelse(predict_DT>0.5,1,0)
+confusionMatrix(table(cut_off,down_train$Class))
+```
+#Downsampling model on test dataset
+```{r}
+predict_TT<-predict(down_all,newdata = test_set,type='response')
+cut_off_test<-ifelse(predict_TT>0.5,1,0)
+hist(predict_TT)
+confusionMatrix(table(cut_off_test,test_set$Status))
+```
+#accuracy is sacrificed with balanced data set model as less valuable features and smaller sample size.However,specificty is greatly imporved t 91.6%. Our model can detect the churn more accurately
+
+
+
+
 
 #Predict Active employees
 ```{r}
