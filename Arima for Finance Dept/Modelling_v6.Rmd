@@ -1,0 +1,246 @@
+---
+title: "Modelling_v6"
+author: "Yuyu"
+date: "June 17, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library, include=FALSE}
+rm(list=ls())
+library(tidyverse)
+library(readxl)
+library(tseries)
+library(fpp2)
+library(TTR)  
+library(forecast)
+library(plotly)
+library(lmtest)
+library(Metrics)
+library(reshape2)
+library(zoo)
+library(lubridate)
+```
+
+```{r data, include=FALSE}
+## Read data
+ap <- read_excel("AP Data_v2.xlsx", sheet = "jgp")
+attach(ap)
+
+## Summarize by million
+ap <- ap %>%
+  group_by(Period) %>%
+  summarise(AP = sum(AP/1000000))
+
+# Format datetime
+ap$P <- seq(ISOdate(2015,9,1), by = "month", length.out = 56)
+
+```
+
+```{r Summary and structure}
+summary(ap) #no missing value
+str(ap) #in correct format
+```
+
+
+```{r plots}
+## Plot
+ggplotly(ggplot(data=ap, aes(x=P, y=AP, group=1)) +
+  geom_line()+
+  geom_point())
+
+## Distribution plot
+ggplotly(ggplot(data=ap, aes(x=AP)) + 
+  geom_histogram(bins = 30, color = "black", fill = "gray"))
+
+## ts object plot
+ap_ts <- subset(ap, select = -c(Period,P))
+ap_ts <- ts(ap_ts, start = c(2016, 01), frequency = 12)
+
+autoplot(ap_ts) + 
+  geom_smooth()+ 
+  xlab("Year. Month") + ylab("JGP AP Actual (in millions)")+
+  ggtitle("AP Actuals")
+
+autoplot(decompose(ap_ts))
+autoplot(decompose(ap_ts, "multiplicative"))
+```
+
+## From the plot, we can see an obvious seasonality
+```{r check seasonality, warning=FALSE}
+cycle(ap_ts)
+boxplot(ap_ts~cycle(ap_ts))
+boxplot(ap_ts~cycle(ap_ts), plot=FALSE)$out
+
+
+ap$Month <- as.factor(cycle(ap_ts))
+ap$Actual_Month <- format(ap$P,"%m")
+ap$Year <- as.factor(as.integer(time(ap_ts)))
+ap$Actual_Year <- format(ap$P,"%Y")
+
+## Boxplot
+plot_ly(type = 'box', color=ap$Month) %>%
+  add_boxplot(x=ap$Month, y=ap$AP, 
+              name = "Month", boxpoints = FALSE) %>%
+  layout(title = "Monthly Boxplot")
+
+## Get yearly trend plot
+ggplotly(ggplot(ap, aes(x=Month, y=AP, group=Year)) +
+  geom_line(aes(color=Year)) +
+  geom_point(aes(color=Year)))
+
+## Distribution by month
+ggplotly(ggplot(data=ap, aes(x=AP, fill=Month, color=Month)) + 
+  geom_histogram(position="identity"))
+
+
+```
+
+## Get average values for each month
+```{r average & median}
+avg <- ap %>% group_by(Month) %>% summarise(AP = mean(AP))
+med <- ap %>% group_by(Month) %>% summarise(AP = median(AP))
+
+avg_med <- merge(avg, med, by.x="Month", by.y="Month", sort=FALSE)%>%
+  rename(
+    AP_avg = AP.x,
+    AP_med = AP.y
+    ) 
+
+avg_med <- melt(avg_med, id.vars="Month") %>%
+  rename(AP_n = value, Stats = variable)
+
+ggplotly(ggplot(avg_med) + 
+  geom_point(aes(x=Month, y = AP_n, group = Stats, col = Stats)) + 
+  geom_line(aes(x=Month, y = AP_n, group = Stats, col = Stats)) 
+  ) 
+
+ap_new <- merge(ap, avg_med, 
+                by.x="Month", by.y="Month", sort=FALSE)
+
+ggplotly(ggplot(ap_new) +
+           geom_line(aes(x=Month, y=AP_n, 
+                          group = Stats, col = Stats),
+                     linetype="dashed") +
+           geom_line(aes(x=Month, y=AP, group=Year, col=Year)) +
+           geom_point(aes(x=Month, y=AP, group=Year, col=Year))
+         )
+```
+
+```{r time series plot average & median line}
+avg_ts0 <- subset(ap_new, ap_new$Stats == "AP_avg") %>% arrange(P)
+avg_ts <- ts(avg_ts0[,9], start = c(2016, 01), frequency = 12)
+autoplot(avg_ts)
+
+med_ts0 <- subset(ap_new, ap_new$Stats == "AP_med") %>% arrange(P)
+med_ts <- ts(med_ts0[,9], start = c(2016, 01), frequency = 12)
+autoplot(med_ts)
+```
+
+```{r check stationary}
+acf(ap_ts)
+pacf(ap_ts)
+adf.test(ap_ts)
+```
+
+```{r set values}
+n <- dim(ap_ts)[1]
+r <- c(0)
+qs <- c(1:12)
+```
+
+```{r modelling}
+options(warn=-1) 
+for (j in qs) {
+  q <- j
+  ap_ts_fit <- ts(ap_ts[1:(n-2-(q-1)*3)], 
+                  start = c(2016, 01), frequency = 12)
+  m <- auto.arima(ap_ts_fit)
+  coeftest(m)
+  prediction <- c(0)
+  mon <- (q-1)*3+3
+  pred <- forecast(m, h=mon)
+  for (i in (1:mon)) {
+    prediction[i] <- pred$mean[i]
+    }
+  forecast_result <- append(ap$AP[1:(n-2-(q-1)*3)],prediction)
+  r[q] <- rmse(ap$AP[(n-mon+2):n], prediction[1:(mon-1)])
+  }
+```
+
+```{r quarters & RMSE}
+plot_ly() %>%
+  add_markers(x=as.factor(qs),y=r,
+              mode = 'lines+markers',
+              line = list(color = 'red', dash = "dot"),
+              name = "RMSE Value") %>%
+  layout(xaxis = list(title = 'Number of Quarters for Training'),
+         yaxis = list(title = 'RMSE Value'))
+```
+
+```{r}
+q <- 1
+ap_ts_fit <- ts(ap_ts[1:(n-2-(q-1)*3)], 
+                start = c(2016, 01), frequency = 12)
+m <- auto.arima(ap_ts_fit)
+coeftest(m)
+prediction <- c(0)
+mon <- (q-1)*3+3
+pred <- forecast(m, h=mon)
+for (i in (1:mon)) {
+  prediction[i] <- pred$mean[i]
+  }
+forecast_result <- append(ap$AP[1:(n-2-(q-1)*3)],prediction)
+rmse(ap$AP[(n-mon+2):n], prediction[1:(mon-1)])
+```
+
+
+```{r prediction plot 1}
+ap_plot <- ap
+ap_plot[nrow(ap_plot)+(mon-2),] <- NA
+
+result <- data.frame("Period" = ap_plot$Period,
+                     "AP" = ap_plot$AP,
+                     "PredictedAP" = forecast_result)
+
+result$P <- seq(ISOdate(2015,9,1), by = "month", length.out = (n[1]+mon-2))
+
+plot_ly(result, x=~P) %>%
+  add_trace(y = ~PredictedAP, 
+            mode = 'lines+markers',
+            line = list(color = 'red'),
+            name = "Predicted Value") %>%
+  add_trace(y = ~AP, 
+            mode = 'lines+markers',
+            line = list(color = 'black'),
+            name = "Actual Value") %>%
+  layout(xaxis = list(title = 'Time'),
+         yaxis = list(title = 'A/P'))
+
+```
+
+```{r prediction plot 2}
+pred_ts <- ts(forecast_result, start = c(2016, 01), frequency = 12)
+
+ap_pred <- ap_plot
+ap_pred$Predicted_Value <- result$PredictedAP
+ap_pred$P <- result$P
+ap_pred$Month <- as.factor(cycle(pred_ts))
+ap_pred$Year <- as.factor(year(as.Date(time(pred_ts))))
+ap_pred$forecast <- NA
+ap_pred$forecast[(n+1):(n[1]+mon-2)] <- prediction
+ap_pred$group <- ifelse(is.na(ap_pred$forecast),"Actual","Forecast")
+
+ggplotly(ggplot(ap_pred, aes(x=Month, y=Predicted_Value, 
+                             group=Year)) +
+           geom_line(aes(color=Year), linetype = "dotted") +
+           geom_point(aes(color=Year, shape = group), size = 2) + 
+           labs(x = "Fiscal Month") +
+           labs(y = "Account Payable") +
+           labs(colour = "Fiscal Year"))
+
+```
+
