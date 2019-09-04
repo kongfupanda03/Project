@@ -1,0 +1,190 @@
+---
+title: "A0091878_XiongYuyu_Day2LogisticRegression"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+pacman::p_load(tidyverse, caret, corrplot, caTools,knitr,car,
+               ROCR,IRdisplay, e1071, earth,readxl,pROC)
+```
+
+Load Data
+```{r}
+setwd("~/Documents/BAP/Predictive analytics/Day2/bank marketing")
+data<-read_excel('bank_data.xlsx')
+head(data,2)
+str(data)
+```
+Meta-data:
+Input variables:
+# bank client data:
+1 - age (numeric)
+2 - job : type of job (categorical: 'admin.','blue-collar','entrepreneur','housemaid','management','retired','self-employed','services','student','technician','unemployed','unknown')
+3 - marital : marital status (categorical: 'divorced','married','single','unknown'; note: 'divorced' means divorced or widowed)
+4 - education (categorical: 'basic.4y','basic.6y','basic.9y','high.school','illiterate','professional.course','university.degree','unknown')
+5 - default: has credit in default? (categorical: 'no','yes','unknown')
+6 - housing: has housing loan? (categorical: 'no','yes','unknown')
+7 - loan: has personal loan? (categorical: 'no','yes','unknown')
+# related with the last contact of the current campaign:
+8 - contact: contact communication type (categorical: 'cellular','telephone') 
+9 - month: last contact month of year (categorical: 'jan', 'feb', 'mar', ..., 'nov', 'dec')
+10 - day_of_week: last contact day of the week (categorical: 'mon','tue','wed','thu','fri')
+11 - duration: last contact duration, in seconds (numeric). Important note: this attribute highly affects the output target (e.g., if duration=0 then y='no'). Yet, the duration is not known before a call is performed. Also, after the end of the call y is obviously known. Thus, this input should only be included for benchmark purposes and should be **discarded** if the intention is to have a realistic predictive model.
+# other attributes:
+12 - campaign: number of contacts performed during this campaign and for this client (numeric, includes last contact)
+13 - pdays: number of days that passed by after the client was last contacted from a previous campaign (numeric; 999 means client was not previously contacted)
+14 - previous: number of contacts performed before this campaign and for this client (numeric)
+15 - poutcome: outcome of the previous marketing campaign (categorical: 'failure','nonexistent','success')
+
+
+Output variable (desired target):
+16 - y - has the client subscribed a term deposit? (binary: 'yes','no')
+
+#Data Preparation
+
+To discard duration based on meta_data description
+```{r}
+data$duration<-NULL
+```
+
+To change categorical values to factor
+
+```{r}
+colnames(data)
+```
+
+```{r}
+cols<-c("job","marital","education","default","housing","loan","contact","day","month","poutcome",'y')
+
+data[cols]<-lapply(data[cols],as.factor)
+```
+```{r}
+summary(data)
+```
+```{r}
+contrasts(data$y)
+```
+```{r}
+data%>%
+  group_by(y)%>%
+  summarise(per=n()/nrow(data))%>%
+  ggplot(aes(x=y,y=per,fill=y))+
+  geom_bar(stat = 'identity')+
+  geom_text(aes(label=round(per,2)),vjust=2)
+```
+
+Unbalanced no/yes class!
+
+```{r}
+cor(data[c(1,6,12,13,14)])
+```
+
+Numerical variables no strong correlations.
+Let's try do modeling first...
+# Modeling
+split data
+```{r}
+set.seed(123)
+split<-sample.split(data$y,SplitRatio = 0.8)
+train<-data[split,]
+test<-data[!split,]
+```
+
+
+Put everything inside model
+```{r}
+model<-glm(y~.,data=train,family = 'binomial')
+summary(model)
+```
+
+```{r}
+vif(model)
+```
+```{r}
+model2<-step(model,trace = F)
+summary(model2)
+```
+```{r}
+vif(model2)
+```
+1. From above, the variables that matter: job,marital,education,balance,housing,load,contact,day,month,campaign,poutcome.
+
+2. for numerical varaibles, vif are all acceptable.
+
+```{r}
+anova(model2,test = 'Chisq')
+```
+From Anova, we see model2 is doing better than null and each variable is significant.
+
+```{r}
+train_pred<-predict(model2,newdata = train,type='response')
+
+```
+
+To select best threshold based AUC
+
+```{r}
+ROCRpred = prediction(train_pred, train$y)
+ROCRperf = performance(ROCRpred, "tpr", "fpr")
+plot(ROCRperf, colorize=TRUE, print.cutoffs.at=seq(0,1,by=0.1), text.adj=c(-0.2,1.7))
+```
+
+Thus the best threshold seems between 0.1 and 0.2. Here we use the yes/overall ratio
+```{r}
+threshold<-sum(train$y=='yes')/length(train$y)
+p_class<-ifelse(train_pred>=threshold,1,0)
+
+matrix<-table(p_class,train$y)
+matrix
+```
+
+
+
+
+```{r}
+accuracy_train<-sum(diag(matrix))/sum(matrix)
+recall_train<-matrix[2,2]/sum(matrix[,2])
+accuracy_train
+recall_train
+```
+
+```{r}
+pr<-prediction(p_class,train$y)
+perf<-performance(pr,measure = "tpr",x.measure = "fpr")
+auc(train$y,p_class)
+plot(perf)
+```
+```{r}
+varImp(model2)
+```
+
+#Apply model to test data
+```{r}
+pred_test<-predict(model2,newdata = test,type = 'response')
+pclass_test<-ifelse(pred_test>=threshold,1,0)
+
+```
+
+```{r}
+matrix_test<-table(pclass_test,test$y)
+matrix_test
+```
+
+
+```{r}
+accuracy_test<-sum(diag(matrix_test))/sum(matrix_test)
+recall_test<-matrix_test[2,2]/sum(matrix_test[,2])
+accuracy_test
+recall_test
+```
+
+```{r}
+pred = prediction(train_pred, train$y)
+perfmance = performance( pred, "lift", "rpp" )
+plot(perfmance, main="lift curve", xlab = 'Proportion of Customers (sorted prob)')
+```
+We can also use lift curve to make our contact strategy.
