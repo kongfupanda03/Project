@@ -1,0 +1,410 @@
+---
+title: "Day3_workshop"
+output: html_document
+---
+
+###Workshop###
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+pacman::p_load(forecast,tseries,fUnitRoots,tidyverse,fastDummies,lmtest)
+```
+
+
+1.Linear regression with internal dummy
+
+```{r}
+data<-read.csv('t6-4 hotel_subset.csv')
+head(data,2)
+sapply(data, class)
+```
+
+
+```{r}
+ggplot(data = data, aes(x= t, y= Hotel.Occupancy..Y.))+geom_line()
+```
+There is an increasing seasonality.(hetroskedasity). I need to do transformation.
+
+```{r}
+data$newY<-data$Hotel.Occupancy..Y.**0.25
+model<-lm(data$newY~t+Month,data=data)
+summary(model)
+```
+```{r}
+ggplot(data = data, aes(x= t, y= logY))+geom_line()
+
+ggplot(data = data, aes(x= t, y=newY))+geom_line()
+```
+
+```{r}
+data$predicted<- (model$fitted.values)**4
+ggplot(data,aes(x=t))+
+  geom_line(aes(y=Hotel.Occupancy..Y.,colour='var0'))+
+  geom_line(aes(y=predicted,colour='var1'))
+
+```
+
+```{r}
+df<-dummy_cols(data)
+head(df,2)
+```
+
+```{r}
+model2<-lm(df$newY~.-Month-Hotel.Occupancy..Y.-logY-x-newY-predicted,data=df)
+summary(model2)
+```
+```{r}
+cbind(head(model$fitted.values,5),head(model2$fitted.values,5))
+```
+
+Time Series
+
+```{r}
+series<-read.csv('AmtrakBig.csv')
+head(series,2)
+```
+```{r}
+is.ts(series$Ridership)
+```
+
+```{r}
+Rider<-ts(series$Ridership,frequency = 12,start=c(1991,1))
+```
+
+```{r}
+is.ts(Rider)
+```
+
+```{r}
+start(Rider)
+end(Rider)
+frequency(Rider)
+cycle(Rider)
+```
+```{r}
+autoplot(Rider)
+```
+
+```{r}
+rider2<-window(Rider,start=1991)
+gglagplot(rider2)
+```
+
+```{r}
+arima100<-arima(Rider,order=c(1,0,0))
+arima100
+```
+```{r}
+forecasted_values<-forecast(arima100,12)
+forecasted_values
+accuracy(forecasted_values)
+autoplot(forecasted_values,lwd=2)
+```
+
+```{r}
+arima001<-arima(Rider,order=c(0,0,1))
+arima001
+```
+
+```{r}
+forecasted_values<-forecast(arima001,12)
+forecasted_values
+accuracy(forecasted_values)
+autoplot(forecasted_values,lwd=2)
+```
+
+Arima(p,d,q)
+Split data
+```{r}
+training<-subset(Rider,end = length(Rider)-27)
+test<-subset(Rider,start=length(Rider)-26)
+```
+```{r}
+cycle(training)
+cycle(test)
+```
+
+```{r}
+AmCom<-decompose(training)
+plot(AmCom,lwd=2,col='blue')
+```
+
+Stationality
+ADF test, null hypothesis: non-stationary
+```{r}
+adfTest(training)
+adf.test(training)
+```
+from tseries::adf.test, it will tell you lag order to make data stationary directly
+
+We take first order to see
+```{r}
+training%>%
+  diff()%>%
+  diff(lag=12)%>%
+  ggtsdisplay()
+
+training%>%
+  diff(lag=12)%>%
+  diff()%>%
+  ggtsdisplay()
+```
+
+```{r}
+model_train<-arima(training,order=c(1,1,1))
+```
+```{r}
+summary(model_train)
+coeftest(model_train)
+```
+```{r}
+checkresiduals(model_train)
+```
+
+```{r}
+pred_test=Arima(test,model=model_train)
+
+accuracy(pred_test)
+```
+```{r}
+model_train%>%forecast(h=27)%>%autoplot()+autolayer(test)
+```
+Auto Arima
+```{r}
+fitAutoArima=auto.arima(training,seasonal = FALSE)
+fitAutoArima
+
+acf(residuals(fitAutoArima),24,lwd=2)
+Box.test(residuals(fitAutoArima),lag=12,type='Ljung')
+```
+
+```{r}
+f3=forecast(fitAutoArima,12)
+f3
+accuracy(f3)
+plot(f3,lwd=2)
+```
+
+seasonal arima
+
+```{r}
+model_sea<-Arima(training,order=c(1,1,1),seasonal = c(1,1,1))
+summary(model_sea)
+```
+
+```{r}
+coeftest(model_sea)
+
+checkresiduals(model_sea)
+
+```
+
+```{r}
+model_sea%>%
+  forecast(h=27)%>%
+  autoplot()+autolayer(test)
+```
+
+```{r}
+pred_test_sea<-Arima(test,model=model_sea)
+summary(pred_test_sea)
+tt1<-forecast(pred_test_sea,h=24)
+tt1
+
+#accuracy(pred_test_sea)
+```
+```{r}
+tt<-forecast(test,model=model_sea)
+tt
+test
+```
+
+
+
+```{r}
+fitAutoArima=auto.arima(training)
+fitAutoArima
+
+coeftest(fitAutoArima)
+
+f3=forecast(fitAutoArima,12)
+f3
+
+accuracy(f3)
+
+plot(f3)
+```
+
+ETS
+
+```{r}
+model_ets<-ets(training)
+summary(model_ets)
+```
+
+```{r}
+checkresiduals(model_ets)
+```
+```{r}
+forecast(model_ets,h=27)%>%autoplot()+autolayer(test)
+```
+```{r}
+pred_test_ets=forecast(test,model = model_ets)
+accuracy(pred_test_ets)
+```
+
+###Take Home Activity###
+**1. Tune arima on Amtrack data**
+Previously we used Arima(1,1,1)(1,1,1), but sar1 not significant, so was auto removed in auto arima; we see auto.arima(1,1,1)(0,1,1)
+
+Also, when we do differencing, we see first order is not stationary either.  Let us try 2nd order differencing.
+
+```{r}
+Train_v1<-Arima(training,order=c(1,2,1),seasonal = c(1,2,1))
+summary(Train_v1)
+
+coeftest(Train_v1)
+```
+All ar,ma values are significant.
+```{r}
+checkresiduals(Train_v1)
+```
+
+```{r}
+accuracy(Train_v1)
+
+accuracy(f3)
+```
+```{r}
+Train_v1%>%forecast(h=27)%>%autoplot()+autolayer(test)
+```
+
+
+How is accuracy of model on test data?
+```{r}
+Test_v1<-Arima(test,model=Train_v1)
+summary(Test_v1)
+```
+Compare with arima(1,1,1)(0,1,1)
+```{r}
+Test_f3<-Arima(test,model = fitAutoArima)
+summary(Test_f3)
+```
+We can see arima(1,2,1)(1,2,1) is better.
+
+
+***2. Decomposition on cola and sales_raw***
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+library(readxl)
+cola<-read_excel('Cola_data.xlsx')
+sales<-read_excel('Sales_raw.xlsx')
+
+```
+
+```{r}
+Cola=ts(cola$`Sales (Y)`,frequency = 12,start = c(2001,1))
+
+Sales=ts(sales$Sales,frequency = 4,start=c(2001,1))
+```
+
+```{r}
+autoplot(Cola)
+autoplot(Sales)
+```
+
+```{r}
+gglagplot(Cola)
+gglagplot(Sales)
+```
+```{r}
+cola_decom<-decompose(Cola)
+plot(cola_decom)
+sales_decom<-decompose(Sales)
+plot(sales_decom)
+```
+***3. Compare arima and ets on sp500***
+
+```{r}
+sp<-read.csv('data_1995.csv')
+head(sp,2)
+```
+```{r}
+sp500<-na.omit(ts(sp$SP500,frequency = 12,start = c(1995,1)))
+sp500
+```
+
+```{r}
+autoplot(sp500)
+```
+```{r}
+gglagplot(sp500)
+```
+
+
+```{r}
+train_sp<-subset(sp500,end = length(sp500)-12)
+test_sp<-subset(sp500,start = length(sp500)-11)
+```
+
+```{r}
+adfTest(train_sp)
+
+adf.test(train_sp)
+```
+
+```{r}
+train_sp%>%diff()%>%diff()%>%autoplot()
+```
+
+```{r}
+f4<-auto.arima(train_sp)
+summary(f4)
+```
+
+```{r}
+model_a<-Arima(train_sp,order = c(1,2,1))
+summary(model_a)
+coeftest(model_a)
+```
+ar1 not significant!set p=0
+
+```{r}
+model_a1<-Arima(train_sp,order=c(0,2,1),seasonal = c(0,2,1))
+model_a1%>%
+  forecast(h=12)%>%
+  autoplot()+autolayer(test_sp)
+```
+```{r}
+pred_test_sp_a1<-Arima(test,model=model_a1)
+summary(pred_test_sp_a1)
+```
+
+
+```{r}
+checkresiduals(model_a1)
+```
+
+Arima predict opposite direction on test data. 
+
+***Let's Try ETS***
+```{r}
+model_ets_v1<-ets(train_sp)
+summary(model_ets_v1)
+```
+```{r}
+checkresiduals(model_ets_v1)
+```
+```{r}
+model_ets_v1%>%forecast(h=12)%>%autoplot()+autolayer(test_sp)
+```
+
+```{r}
+pred_test_sp_a1_ets<-forecast(test_sp,model = model_ets_v1)
+summary(pred_test_sp_a1_ets)
+```
+ETS also predicts wrong direction but with lower accuracy compared with arima.
+
