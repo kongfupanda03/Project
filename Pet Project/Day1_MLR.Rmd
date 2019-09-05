@@ -1,0 +1,273 @@
+---
+title: "Day2_Workshop1"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Import package
+```{r Import Package, message=FALSE, warning=FALSE, paged.print=FALSE}
+pacman::p_load(tidyverse,caret,corrplot,broom,ggpubr,MASS,relaimpo,car,e1071,interplot,plotly,nortest)
+```
+
+Import data
+```{r}
+setwd("~/Documents/BAP/Predictive analytics/Day2")
+df<-read.csv('drive_time_sedans.csv')
+head(df,2)
+```
+```{r}
+summary(df)
+```
+# Data Preparation and exploration
+Data types look correct, check the consistency.
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+(df%>%filter(overage=='NO')%>%
+  ggplot(aes(x=lot.sale.days))+geom_histogram())%>%ggplotly()
+
+(df%>%filter(overage=='YES')%>%
+  ggplot(aes(x=lot.sale.days))+geom_histogram())%>%ggplotly()
+```
+Lot sale days is consistent with overage category
+
+Distribution of Overage and lot sale days
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+df%>%ggplot(aes(x=lot.sale.days,fill=overage))+geom_histogram()
+
+df%>%ggplot(aes(x=overage))+geom_bar()+geom_text(aes(label=..count..),stat = 'count')
+```
+Vehicle age distribution
+```{r}
+df%>%ggplot(aes(x=vehicle.age.group))+geom_bar()
+df%>%ggplot(aes(x=vehicle.age))+geom_bar()
+
+```
+overage vs vehicle age
+```{r}
+df%>%ggplot(aes(overage,vehicle.age))+geom_boxplot()
+```
+Overage cars have a higher average vehicle age.
+
+overage by state
+```{r}
+df%>%ggplot(aes(x=state,fill=overage))+geom_bar(position = 'dodge')
+```
+
+
+
+Correlation 
+
+```{r}
+corrplot::corrplot(cor(df[,sapply(df,is.numeric)],use='complete.obs'),method = 'number', type='lower')
+
+```
+My lot.sale.age does not have a strong linear correlation with numerical values... 
+I want to see how they look like...
+
+```{r}
+p1<-df%>%ggplot(aes(x=total.cost,y=lot.sale.days))+geom_point()+geom_smooth(method = 'loess')
+p2<-df%>%ggplot(aes(x=mileage,y=lot.sale.days))+geom_point()+geom_smooth(method = 'loess')
+p3<-df%>%ggplot(aes(x=vehicle.age,y=lot.sale.days))+geom_point()+geom_smooth(method = 'loess')
+ggarrange(p1,p2,p3,labels = c('A','B','C'),ncol = 3,nrow = 1)
+```
+1.vehicle.age should be ordinal categorical values
+2. need transformation on cost and mileage
+
+***squre***
+```{r}
+p1<-df%>%ggplot(aes(x=total.cost**2,y=lot.sale.days))+geom_point()+geom_smooth(method = 'loess')
+p2<-df%>%ggplot(aes(x=mileage**2,y=lot.sale.days))+geom_point()+geom_smooth(method = 'loess')
+ggarrange(p1,p2,labels = c('A','B','C'),ncol = 3,nrow = 1)
+
+```
+
+*** Log***
+```{r}
+p1<-df%>%ggplot(aes(x=log(total.cost),y=lot.sale.days))+geom_point()+geom_smooth(method = 'loess')
+p2<-df%>%ggplot(aes(x=log(mileage),y=lot.sale.days))+geom_point()+geom_smooth(method = 'loess')
+ggarrange(p1,p2,labels = c('A','B','C'),ncol = 3,nrow = 1)
+```
+Unable to transform to some ideal relation close to linear. I will have to adjust model or section our data to try later.
+Based on above plotting, I will still use original cost and mileage to assess.
+
+Transform target varible to normal
+```{r}
+(df%>%ggplot(aes(y=lot.sale.days))+geom_boxplot(coef=2))%>%ggplotly
+```
+
+```{r}
+qqnorm(df$lot.sale.days,ylim = c(0,100))
+qqline(df1$lot.sale.days)
+```
+
+```{r}
+sum(df$lot.sale.days>174)
+```
+
+***The outliers are all overage data and account for more than 25% of overage samples. I decide not to remove them.***
+
+log2
+```{r}
+df%>%ggplot(aes(log2(lot.sale.days)))+geom_histogram()
+```
+```{r}
+qqnorm(log2(df$lot.sale.days),ylim = c(0,40))
+qqline(log2(df$lot.sale.days))
+```
+it is not normal.
+
+
+
+sqrt
+```{r}
+df%>%ggplot(aes(sqrt(lot.sale.days)))+geom_histogram()
+```
+```{r}
+qqnorm(sqrt(df$lot.sale.days),ylim = c(0,50))
+qqline(sqrt(df$lot.sale.days))
+```
+
+Based on above, I will do a log2 transformation for target variable
+```{r}
+df1<-df%>%filter(lot.sale.days!=0)
+df1$lot.sale.days<-log2(df1$lot.sale.days)
+```
+
+```{r}
+df1%>%ggplot(aes(lot.sale.days))+geom_histogram()
+```
+```{r}
+qqnorm(df1$lot.sale.days,ylim = c(0,50))
+qqline(df1$lot.sale.days)
+```
+```{r}
+skewness(df1$lot.sale.days)
+```
+```{r}
+ad.test(df1$lot.sale.days)#null: data is normally distributed
+```
+p-value less than 0.05,so even after log2 transformation, lot.sale.days not normal.
+
+
+
+```{r}
+corrplot::corrplot(cor(df1[,sapply(df1,is.numeric)],use='complete.obs'),method = 'number', type='lower')
+```
+Based on above analysis, target was unable to be transformed to perfect normal distribution and also as the lot.sale.days are integers, the q-q plot look discrete
+ 
+As for pricing and profit analysis, the car final sale status shoud be cut to 3 categories based on the lot.sale.day. I will build regression models to predict the lot.sale.day , then based on the best model accuracy, I will further do profit analysis.
+ 
+
+model0
+```{r}
+model0<-lm(lot.sale.days~., data = df[c(2:3,5:12)])
+summary(model0)
+```
+
+```{r}
+par(mfrow = c(2, 2))
+plot(model0)
+```
+Very obvious, the linear regression assumption does not hold. Lets see whats going wrong.
+
+```{r}
+model0_stats<-augment(model0)
+
+```
+
+```{r}
+model0_stats%>%ggplot(aes(.resid))+geom_histogram()
+```
+The residuals are right skewed.
+Then I want to go back to see if my numerical values is linear correlated to my target
+
+model0_1 with log2 transformation
+
+```{r}
+model0_1<-lm(lot.sale.days~., data = df1[c(2:3,5:12)])
+summary(model0_1)
+```
+```{r}
+par(mfrow=c(2,2))
+plot(model0_1)
+```
+
+
+```{r}
+model0_1_stats<-augment(model0_1)
+model0_1_stats%>%ggplot(aes(.resid))+geom_histogram()
+```
+df1 residual also not normal.
+
+I decide not to do log2 transformation, and keep data as original and adjust model parameter to improve peroformace.
+
+Split data
+```{r}
+train<-df%>%filter(data.set=='TRAIN')%>%select(c(2:3,5:12))
+validate<-df%>%filter(data.set=='VALIDATE')%>%select(c(2:3,5:12))
+test<-df%>%filter(data.set=='TEST')%>%select(c(2:3,5:12))
+```
+
+```{r}
+model1<-lm(lot.sale.days~.-domestic.import, data = train)
+summary(model1)
+```
+```{r}
+par(mfrow=c(2,2))
+plot(model1)
+```
+```{r}
+vif(model1)
+```
+
+vehicle age and group has high multicolinearity, this is due to these two variabled are not independent. Remove group.
+
+```{r}
+model2<-lm(lot.sale.days~.-domestic.import-vehicle.age.group,data=train)
+summary(model2)
+```
+```{r}
+vif(model2)
+```
+relative importance
+```{r}
+plot(calc.relimp(model2,rela=TRUE))
+```
+```{r}
+pred2<-predict(model2,newdata = validate)
+RMSE(validate$lot.sale.days,pred2)
+```
+```{r}
+SSE = sum((validate$lot.sale.days - pred2)^2)
+SST = sum((validate$lot.sale.days - mean(validate$lot.sale.days))^2)
+R_Sq= 1 - (SSE / SST)
+round(R_Sq,4)
+```
+Very bad linear relation
+
+To further improve:
+1.Separate data to different state
+2. Any interaction effect?
+```{r}
+df%>%ggplot(aes(state))+geom_bar()
+```
+```{r}
+AZ<-(df[df$state=='AZ',]%>%select(-c('state','overage','make.model')))
+head(AZ)
+```
+```{r}
+df%>%ggplot(aes(lot.sale.days))+geom_histogram()+facet_grid(state~.)
+```
+```{r}
+AZ_m<-lm(lot.sale.days~., data = AZ[-1])
+summary(AZ_m)
+```
+Tried for 1 state, the R2 still very small, it is concluded that linear model is not fit
+
+
+
+### Classification###
+
+
