@@ -1,0 +1,280 @@
+---
+title: "CA1_3"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+pacman::p_load(forecast,tseries,fUnitRoots,tidyverse,fastDummies,lmtest,gtools,car,caret)
+```
+
+```{r}
+data<-read.csv('AmtrakBig_CA_Question-3.csv')
+str(data)
+head(data,2)
+```
+
+```{r}
+ggplot(data,aes(x=t,y=Ridership))+geom_line()
+```
+
+```{r}
+data_dummy<-data
+data_dummy$Year<-gsub('\\D','',x=data_dummy$Month)
+```
+
+```{r}
+ggplot(data_dummy,aes(x=Season,y=Ridership,fill=Year))+geom_bar(stat = 'identity',position = 'dodge')
+
+ggplot(data_dummy[-c(157:159),],aes(x=Season,y=Ridership,color=Year,group=Year))+
+  geom_point()+
+  geom_line()+
+  scale_x_discrete(limits = month.abb)
+
+```
+
+```{r}
+Rider<-ts(data$Ridership,frequency = 12,start=c(2005,1))
+is.ts(Rider)
+```
+
+```{r}
+gglagplot(Rider)
+```
+***There is auto-correlation in Ridership. Time-series applies.Lad is 12***
+
+##1. Arima##
+***I have run arima(111)(111)12,arima(111)(011)12 in JMP, and found arima(111)(011)12 is suitable model***
+
+Train/Test
+```{r}
+train<-subset(Rider,end = length(Rider)-15)
+test<-subset(Rider,start=length(Rider)-14)
+```
+
+```{r}
+model_arima<-Arima(train,order = c(1,1,1),seasonal = c(0,1,1))
+summary(model_arima)
+```
+```{r}
+checkresiduals(model_arima)
+```
+
+
+```{r}
+pred_test_arima<-forecast(model_arima,h=15)
+summary(pred_test_arima)
+```
+```{r}
+accuracy_arima<-accuracy(pred_test_arima$mean,test)
+accuracy_arima
+```
+```{r}
+pred_test_arima%>%autoplot()+autolayer(test)
+```
+```{r}
+forecast_arima<-forecast(test,model=model_arima,h=6)
+summary(forecast_arima)
+```
+
+```{r}
+forecast_arima%>%autoplot()+autolayer(train)
+```
+
+```{r}
+value_arima<-forecast_arima$mean
+```
+
+##2.Exponential Smoothing##
+
+```{r}
+model_ets<-ets(train)
+summary(model_ets)
+```
+```{r}
+checkresiduals(model_ets)
+```
+```{r}
+shapiro.test(model_ets$residuals)
+```
+**Residuals are not normal**
+
+```{r}
+pred_test_ets<-forecast(model_ets,h=15)
+summary(pred_test_ets)
+```
+```{r}
+accuracy_ets<-accuracy(pred_test_ets$mean,test)
+```
+
+```{r}
+accuracy_ets
+accuracy_arima
+```
+
+#Based on test data accuracy, arima is a better model#
+
+##3.Decomposition Method##
+```{r}
+train_decom<-decompose(train)
+plot(train_decom)
+```
+
+```{r}
+model_decom<-stl(train,t.window = 13,s.window = 'periodic')
+summary(model_decom)
+```
+
+```{r}
+pred_test_decom<-forecast(model_decom,h=15,method = 'naive')
+summary(pred_test_decom)
+```
+```{r}
+accuracy_decom<-accuracy(pred_test_decom$mean,test)
+```
+
+```{r}
+accuracy_arima
+accuracy_decom
+accuracy_ets
+```
+
+** Decomposition is best based on test accuracy among arima, decom, ets.**
+
+```{r}
+model_decom_1<-stl(Rider,t.window = 13,s.window = 'periodic')
+forecast_decom<-forecast(model_decom_1,h=6,method = 'naive')
+```
+
+```{r}
+forecast_decom%>%autoplot()
+
+```
+
+```{r}
+value_decom<-forecast_decom$mean
+value_decom
+```
+
+
+##4. Regression##
+**Based on previous decomposition results, we can see trend does not follow linear trend. It looks close to a quadratic model**
+```{r}
+ggplot(data=data,aes(x=Ridership))+geom_histogram()
+```
+
+```{r}
+shapiro.test(data$Ridership)
+```
+Ridership is normally distributed..
+
+```{r}
+train_mlr<-data[1:144,]
+test_mlr<-data[145:159,]
+
+```
+```{r}
+model_mlr<-lm(Ridership~t+I(t^2)+Season,data = train_mlr)
+summary(model_mlr)
+```
+```{r}
+par(mfrow=c(2,2))
+plot(model_mlr)
+```
+```{r}
+vif(model_mlr)
+```
+**t and T^2 VIF larger than 10. **
+
+
+
+```{r}
+checkresiduals(model_mlr$residuals)
+```
+
+
+```{r}
+shapiro.test(model_mlr$residuals)
+```
+The residuals **failed** shapiro test.
+
+Let me remove first order term and try.
+
+```{r}
+model_mlr_1<-lm(Ridership~I(t^2)+Season,data = train_mlr)
+summary(model_mlr_1)
+```
+```{r}
+par(mfrow=c(2,2))
+plot(model_mlr_1)
+```
+```{r}
+vif(model_mlr_1)
+```
+
+
+```{r}
+checkresiduals(model_mlr_1$residuals)
+```
+```{r}
+shapiro.test(model_mlr_1$residuals)
+```
+This time model residuals meet regression assumptions.
+
+
+Try 3rd order degree
+```{r}
+model_mlr_3rd<-lm(Ridership~t+I(t^2)+I(t^3)+Season,data = train_mlr)
+summary(model_mlr_3rd)
+```
+We can see 3rd order item is insignificant,hence, we use 2nd order for mlr model
+
+```{r}
+pred_test_mlr<-predict(model_mlr_1,test_mlr)
+accuracy_mlr<-accuracy(pred_test_mlr,test_mlr$Ridership)
+```
+
+Compare model accuracy
+```{r}
+Acc<-data.frame(smartbind(accuracy_arima,accuracy_decom,accuracy_ets,accuracy_mlr))
+rownames(Acc)<-c('Arima','Decomposition','Ets','Mlr')
+Acc
+```
+
+
+
+**Conclusion:  Quadratic regression gives best accuracy on test data set. The prediction of next 6 month uses quadratic regression method**
+
+```{r}
+model_final<-lm(Ridership~I(t^2)+Season,data=data)
+summary(model_final)
+```
+```{r}
+to_be_forecasted<-data.frame(t=c(160:165),Season=c('Apr','May','Jun','Jul','Aug','Sep'),stringsAsFactors = TRUE)
+to_be_forecasted
+```
+```{r}
+pred_final<-predict(model_final,to_be_forecasted)
+pred_final
+```
+
+
+```{r}
+pred_df<-(to_be_forecasted%>%mutate(Ridership=pred_final,type=rep('forecast',length(pred_final)))%>%select(t,Ridership,type))
+data%>%select(t,Ridership)%>%mutate(type=rep('History',length(data$Ridership)))%>%
+  rbind.data.frame(pred_df)%>%
+  ggplot(aes(x=t,y=Ridership,colour=type))+geom_line()+geom_point()
+```
+```{r}
+forecast_value<-(to_be_forecasted%>%mutate(Ridership=pred_final))
+forecast_value
+```
+```{r}
+t<-forecast_value[,c(2,3)]
+t(t)
+```
+
+
